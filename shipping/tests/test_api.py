@@ -73,6 +73,40 @@ class RecommendEndpointTests(ApiTestBase):
         self.assertEqual(r.status_code, 400)
 
 
+    def test_huge_quantity_is_rejected_quickly(self):
+        # must be rejected before any per-unit objects are created
+        r = self.post({"items": [{"sku": "BOOK", "quantity": 10**12}]})
+        self.assertEqual(r.status_code, 400)
+
+    def test_many_small_lines_over_limit_400(self):
+        r = self.post({"items": [{"sku": "BOOK", "quantity": 1}] * 501})
+        self.assertEqual(r.status_code, 400)
+
+    def test_non_string_sku_400_not_500(self):
+        for sku in (["BOOK"], {"a": 1}, 5, None):
+            with self.subTest(sku=sku):
+                self.assertEqual(self.post({"items": [{"sku": sku, "quantity": 1}]}).status_code, 400)
+
+    def test_non_utf8_body_400_not_500(self):
+        r = self.client.post(reverse("recommend-box"), b"\xff\xfe\x00", content_type="application/json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_json_body_that_is_not_an_object_400(self):
+        for body in ("[]", "42", '"text"', "null"):
+            with self.subTest(body=body):
+                self.assertEqual(self.post(body, raw=True).status_code, 400)
+
+    def test_quantity_omitted_defaults_to_one(self):
+        r = self.post({"items": [{"sku": "BOOK"}]})
+        self.assertEqual(r.status_code, 200)
+        self.assertAlmostEqual(r.json()["total_weight_kg"], 0.5)
+
+    def test_exactly_max_units_is_allowed(self):
+        # 500 books is over every box's weight limit -> 422 (valid request, no box), never 400/500
+        r = self.post({"items": [{"sku": "BOOK", "quantity": 500}]})
+        self.assertEqual(r.status_code, 422)
+
+
 class OrderEndpointTests(ApiTestBase):
     def test_order_recommendation(self):
         order = Order.objects.create(reference="ORD-1")
@@ -92,3 +126,14 @@ class OrderEndpointTests(ApiTestBase):
         order = Order.objects.create(reference="ORD-2")
         OrderItem.objects.create(order=order, product=self.heavy, quantity=1)
         self.assertEqual(self.client.get(reverse("order-box", args=["ORD-2"])).status_code, 422)
+
+
+class HomePageTests(ApiTestBase):
+    def test_home_page_renders(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Box Selector")
+        self.assertContains(r, "BOOK")
+
+    def test_favicon_no_404(self):
+        self.assertEqual(self.client.get("/favicon.ico").status_code, 204)

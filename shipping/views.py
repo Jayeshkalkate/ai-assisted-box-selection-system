@@ -4,12 +4,14 @@ from django.shortcuts import render
 
 import json
 
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .models import Order, Product
-from .services import InputError, recommend_for_lines
+from .models import Box, Order, Product
+from .services import MAX_UNITS, InputError, recommend_for_lines
+
+MAX_LINES = MAX_UNITS  # a line has quantity >= 1, so more lines than units can never be valid
 
 
 def _serialize(rec):
@@ -34,16 +36,19 @@ def _respond(rec):
 def recommend_box_view(request):
     try:
         payload = json.loads(request.body or b"{}")
-    except json.JSONDecodeError:
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError are both ValueErrors
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     raw = payload.get("items") if isinstance(payload, dict) else None
     if not isinstance(raw, list) or not raw:
         return JsonResponse({"error": "'items' must be a non-empty list"}, status=400)
 
+    if len(raw) > MAX_LINES:
+        return JsonResponse({"error": f"Too many item lines (max {MAX_LINES})"}, status=400)
+
     merged = {}
     for row in raw:
-        if not isinstance(row, dict) or "sku" not in row:
-            return JsonResponse({"error": "Each item needs 'sku' and 'quantity'"}, status=400)
+        if not isinstance(row, dict) or not isinstance(row.get("sku"), str):
+            return JsonResponse({"error": "Each item needs a string 'sku' and an integer 'quantity'"}, status=400)
         qty = row.get("quantity", 1)
         if isinstance(qty, bool) or not isinstance(qty, int) or qty < 1:
             return JsonResponse({"error": f"Invalid quantity for {row['sku']}"}, status=400)
@@ -74,3 +79,18 @@ def order_box_view(request, reference):
     except InputError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     return _respond(rec)
+
+
+
+@require_http_methods(["GET"])
+def home_view(request):
+    """Landing page: a small UI on top of the JSON API."""
+    return render(request, "shipping/index.html", {
+        "products": Product.objects.order_by("sku"),
+        "boxes": Box.objects.filter(is_active=True).order_by("cost", "name"),
+        "orders": Order.objects.order_by("reference"),
+    })
+
+
+def favicon_view(request):
+    return HttpResponse(status=204)

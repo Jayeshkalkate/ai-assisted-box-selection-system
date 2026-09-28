@@ -4,6 +4,19 @@ A small Django service that recommends the most suitable shipping box for an eco
 
 The selection engine is intentionally kept independent from Django so the core packing logic can be tested without a database. The API layer converts database records into packing inputs and returns a compact JSON recommendation.
 
+## Quick start
+
+```bash
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py seed_demo        # demo products, boxes and order ORD-1001
+python manage.py runserver
+```
+
+Open http://127.0.0.1:8000/ for the web UI. Admin: http://127.0.0.1:8000/admin/
+(create your own admin login with `python manage.py createsuperuser`; the SQLite database is
+git-ignored, so a fresh clone starts empty and `seed_demo` fills it).
+
 ## Problem
 
 For each order, the warehouse needs a box that:
@@ -22,7 +35,11 @@ The system assumes rectangular, rigid products and boxes. Units are centimetres 
 box-selector/
 ├── box_selector/               # Django project configuration
 ├── shipping/
+│   ├── management/commands/
+│   │   └── seed_demo.py        # Demo products, boxes and order ORD-1001
 │   ├── migrations/             # Database schema
+│   ├── templates/shipping/
+│   │   └── index.html          # Small web UI on top of the JSON API
 │   ├── tests/
 │   │   ├── test_packing.py     # Pure algorithm tests
 │   │   └── test_api.py         # Django API tests
@@ -138,14 +155,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Create and apply migrations
+### 3. Apply migrations
 
 ```bash
-python manage.py makemigrations shipping
 python manage.py migrate
+python manage.py seed_demo   # optional demo data
 ```
 
-Commit the generated `shipping/migrations/0001_initial.py`.
+The initial migration (`shipping/migrations/0001_initial.py`) is already committed. Only run
+`makemigrations` again if you change `models.py`.
 
 ### 4. Create an admin user
 
@@ -198,7 +216,9 @@ The suite covers:
 - duplicate SKU merging;
 - unknown SKUs;
 - empty and unknown orders;
-- HTTP method handling.
+- HTTP method handling;
+- hostile payloads: non-string SKUs, non-UTF-8 bodies, non-object JSON, and huge quantities
+  (rejected before any per-unit objects are built).
 
 CI runs `manage.py check` and the Django test suite on every push and pull request.
 
@@ -206,11 +226,20 @@ CI runs `manage.py check` and the Django test suite on every push and pull reque
 
 The assignment API is intentionally simple and has no authentication layer. The recommendation endpoint is CSRF-exempt because it is designed as a machine-to-machine JSON endpoint.
 
+Production settings: with `DJANGO_DEBUG=0` the app refuses to start unless `DJANGO_SECRET_KEY` is a
+long random value, and it enables HTTPS redirect, secure cookies and HSTS (see `.env.example`).
+Check with:
+
+```bash
+DJANGO_DEBUG=0 DJANGO_SECRET_KEY=<50+ random chars> DJANGO_ALLOWED_HOSTS=yourdomain.com \
+  python manage.py check --deploy
+```
+
 Before exposing it publicly, add API authentication (for example, token-based authentication), rate limiting, structured request logging, and production Django security settings.
 
 ## Environment variables
 
-Copy `.env.example` to `.env` for reference. Django does not read `.env` by itself, so export the values in your shell (for example `DJANGO_SECRET_KEY`) before running the server.
+Settings read a `.env` file in the project root automatically (real environment variables take priority). Copy `.env.example` to `.env` to customise.
 
 ## Reviewer files
 
